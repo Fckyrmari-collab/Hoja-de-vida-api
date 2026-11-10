@@ -14,6 +14,17 @@ def probar_data():
         conec.close()
     return {"mensaje": "conexion ok"}
 
+
+
+@app.route("/api/registro-usuario",methods=["POST"])
+def registro_usuario():
+    pass
+
+@app.route("/api/login",methods=["POST"])
+def login ():
+    pass
+
+
 # APRENDICES (HOJAS DE VIDA)
 
 
@@ -403,5 +414,5 @@ def hoja_vida_completa(id_aprendiz):
 def inicio():
     return "API Hoja de Vida funcionando"
 
-if __name__ == "__main__":
-    app.run(debug=True)
+if __name__ == '__main__':
+    app.run(debug=True, port=5000)
