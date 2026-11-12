@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Usuarios - Hojas de Vida SENA</title>
+     <style>
+        /* ===== PALETA MORADO CLARO ===== */
+        :root {
+            --morado: #9b7ed9;         /* principal (header, botones) */
+            --morado-oscuro: #7c5fc4;  /* hover y títulos */
+            --morado-texto: #5b3f9e;   /* textos destacados */
+            --lavanda: #f1ecfb;        /* fondos suaves */
+            --borde: #e2d9f5;          /* bordes */
+            --fondo: #f8f6fd;          /* fondo de la página */
+        }
+ 
+        * { box-sizing: border-box; }
+        body { font-family: Arial, sans-serif; background: var(--fondo); margin: 0; color: #3d3550; }
+        header { background: linear-gradient(90deg, #a98be0, #8f73d4); color: white; padding: 18px 30px; }
+        header h1 { margin: 0; font-size: 22px; }
+        main { max-width: 1000px; margin: 25px auto; padding: 0 15px; display: grid; grid-template-columns: 320px 1fr; gap: 20px; }
+        .card { background: white; border: 1px solid var(--borde); border-radius: 10px; padding: 20px; box-shadow: 0 2px 8px rgba(124, 95, 196, .08); }
+        h2 { margin-top: 0; font-size: 18px; color: var(--morado-oscuro); }
+        label { display: block; font-size: 14px; margin: 10px 0 4px; color: #5c5470; font-weight: bold; }
+        input, select { width: 100%; padding: 8px; border: 1px solid var(--borde); border-radius: 6px; background: white; color: #3d3550; }
+        input:focus, select:focus { outline: none; border-color: var(--morado); box-shadow: 0 0 0 3px rgba(155, 126, 217, .2); }
+        button { margin-top: 15px; width: 100%; padding: 10px; background: var(--morado); color: white; border: none; border-radius: 6px; font-size: 15px; cursor: pointer; }
+        button:hover { background: var(--morado-oscuro); }
+        #mensaje { margin-top: 12px; padding: 10px; border-radius: 6px; display: none; font-size: 14px; }
+        .ok { background: var(--lavanda); color: var(--morado-texto); border: 1px solid var(--borde); }
+        .error { background: #fdecef; color: #a3324a; border: 1px solid #f6cdd6; }
+        table { width: 100%; border-collapse: collapse; font-size: 14px; }
+        th, td { padding: 9px; text-align: left; border-bottom: 1px solid #efeaf8; }
+        th { background: var(--lavanda); color: var(--morado-texto); }
+        tbody tr:hover { background: #faf8fe; }
+        .estado-Activo { color: var(--morado-texto); font-weight: bold; }
+        .estado-Inactivo { color: #a3324a; font-weight: bold; }
+        @media (max-width: 750px) { main { grid-template-columns: 1fr; } }
+    </style>
+</head>
+<body>
+    <header><h1>Sistema de Hojas de Vida - SENA</h1></header>
+
+    <main>
+        <!-- FORMULARIO DE REGISTRO -->
+        <section class="card">
+            <h2>Registrar usuario</h2>
+            <form id="formRegistro">
+                <label>Nombre de usuario</label>
+                <input name="nombre_usuario" required>
+
+                <label>Correo</label>
+                <input name="correo" type="email" required>
+
+                <label>Contraseña</label>
+                <input name="password" type="password" minlength="6" required>
+
+                <label>Fecha de nacimiento</label>
+                <input name="fecha_nacimiento" type="date" required>
+
+                <label>Rol</label>
+                <select name="rol">
+                    <option>Aprendiz</option>
+                    <option>Instructor</option>
+                    <option>Administrador</option>
+                </select>
+
+                <button type="submit">Registrar</button>
+            </form>
+            <div id="mensaje"></div>
+        </section>
+
+        <!-- LISTA DE USUARIOS -->
+        <section class="card">
+            <h2>Usuarios registrados ({{ usuarios|length }})</h2>
+            <table>
+                <thead>
+                    <tr><th>ID</th><th>Usuario</th><th>Correo</th><th>Rol</th><th>Estado</th><th>Nacimiento</th></tr>
+                </thead>
+                <tbody>
+                    {% for u in usuarios %}
+                    <tr>
+                        <td>{{ u.id_usuario }}</td>
+                        <td>{{ u.nombre_usuario }}</td>
+                        <td>{{ u.correo }}</td>
+                        <td>{{ u.rol }}</td>
+                        <td class="estado-{{ u.estado }}">{{ u.estado }}</td>
+                        <td>{{ u.fecha_nacimiento }}</td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="6">Todavía no hay usuarios registrados.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </section>
+    </main>
+
+    <script>
+        const form = document.getElementById("formRegistro");
+        const mensaje = document.getElementById("mensaje");
+
+        form.addEventListener("submit", async (e) => {
+            e.preventDefault();
+            const datos = Object.fromEntries(new FormData(form));
+
+            const respuesta = await fetch("/api/registro-usuario", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(datos)
+            });
+            const resultado = await respuesta.json();
+
+            mensaje.style.display = "block";
+            if (respuesta.ok) {
+                mensaje.className = "ok";
+                mensaje.textContent = resultado.mensaje;
+                setTimeout(() => location.reload(), 800);   // recarga para ver el nuevo usuario en la tabla
+            } else {
+                mensaje.className = "error";
+                mensaje.textContent = resultado.error;      // ej: "Ese correo ya está registrado"
+            }
+        });
+    </script>
+</body>
+</html>
