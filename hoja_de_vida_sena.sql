@@ -1,21 +1,5 @@
 -- =====================================================================
 -- BASE DE DATOS: Sistema de Registro de Hojas de Vida (SENA)
-
--- =====================================================================
-
-DROP DATABASE IF EXISTS hoja_de_vida_sena;
-CREATE DATABASE hoja_de_vida_sena
-    CHARACTER SET utf8mb4
-    COLLATE utf8mb4_spanish_ci;
-
-USE hoja_de_vida_sena;
-
--- =====================================================================
--- TABLA: aprendices
--- Corresponde al FormularioDatos.jsx (paso 1)
--- =====================================================================
--- =====================================================================
--- BASE DE DATOS: Sistema de Registro de Hojas de Vida (SENA)
 -- Proyecto: Registro de Aprendices - Datos personales, académicos
 --           y experiencia laboral
 -- Motor: MySQL 8.x
@@ -50,13 +34,9 @@ CREATE TABLE aprendices (
 -- =====================================================================
 -- TABLA: usuarios
 -- Cuentas de acceso al sistema (login)
--- Relación 1:1 con aprendices (cada aprendiz tiene máximo un usuario).
--- id_aprendiz admite NULL para usuarios que no son aprendices
--- (por ejemplo un Administrador o un Instructor).
 -- =====================================================================
 CREATE TABLE usuarios (
     id_usuario       INT AUTO_INCREMENT PRIMARY KEY,
-    id_aprendiz      INT                                 NULL,
     nombre_usuario   VARCHAR(50)                         NOT NULL,
     correo           VARCHAR(150)                        NOT NULL,
     password         VARCHAR(255)                        NOT NULL,  -- guardar el HASH, nunca la contraseña en texto plano
@@ -64,13 +44,20 @@ CREATE TABLE usuarios (
     estado           ENUM('Activo','Inactivo')           NOT NULL DEFAULT 'Activo',
     fecha_nacimiento DATE                                NOT NULL,
     fecha_creacion   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT uq_usuario_nombre   UNIQUE (nombre_usuario),
-    CONSTRAINT uq_usuario_correo   UNIQUE (correo),
-    CONSTRAINT uq_usuario_aprendiz UNIQUE (id_aprendiz),
-    CONSTRAINT fk_usuario_aprendiz
-        FOREIGN KEY (id_aprendiz) REFERENCES aprendices (id_aprendiz)
-        ON DELETE CASCADE ON UPDATE CASCADE
+    CONSTRAINT uq_usuario_nombre UNIQUE (nombre_usuario),
+    CONSTRAINT uq_usuario_correo UNIQUE (correo)
 ) ENGINE = InnoDB;
+
+-- =====================================================================
+-- RELACIÓN: aprendices -> usuarios (1:1)
+-- Se agrega la columna id_usuario a aprendices y se enlaza con usuarios.
+-- UNIQUE: un usuario solo puede pertenecer a un aprendiz.
+-- NULL: un aprendiz puede existir sin usuario todavía.
+-- =====================================================================
+ALTER TABLE aprendices
+ADD COLUMN id_usuario INT NULL UNIQUE,
+ADD CONSTRAINT fk_aprendiz_usuario
+FOREIGN KEY (id_usuario) REFERENCES usuarios(id_usuario);
 
 -- =====================================================================
 -- TABLA: informacion_academica
@@ -151,17 +138,15 @@ CREATE TABLE funciones (
 -- =====================================================================
 -- DATOS DE PRUEBA (opcional, para probar el modelo)
 -- =====================================================================
-INSERT INTO aprendices (nombre, edad, ciudad, correo, programa, ficha, jornada)
-VALUES ('Juan Pérez', 22, 'Bogotá', 'juan.perez@sena.edu.co', 'ADSO', 2758934, 'Mañana');
-
--- Usuario del aprendiz Juan Pérez (contraseña de prueba: 123456)
+-- Primero los usuarios (el aprendiz los necesita para enlazarse)
 -- SHA2 solo es para datos de prueba; desde la API usa un hash seguro (bcrypt / werkzeug).
-INSERT INTO usuarios (id_aprendiz, nombre_usuario, correo, password, rol, estado, fecha_nacimiento)
-VALUES (1, 'juanperez', 'juan.perez@sena.edu.co', SHA2('123456', 256), 'Aprendiz', 'Activo', '2004-03-15');
+INSERT INTO usuarios (nombre_usuario, correo, password, rol, estado, fecha_nacimiento)
+VALUES ('juanperez', 'juan.perez@sena.edu.co', SHA2('123456', 256), 'Aprendiz', 'Activo', '2004-03-15'),  -- id_usuario = 1
+       ('admin', 'admin@sena.edu.co', SHA2('admin123', 256), 'Administrador', 'Activo', '1990-01-01');      -- id_usuario = 2 (no es aprendiz)
 
--- Usuario administrador (no está ligado a ningún aprendiz)
-INSERT INTO usuarios (id_aprendiz, nombre_usuario, correo, password, rol, estado, fecha_nacimiento)
-VALUES (NULL, 'admin', 'admin@sena.edu.co', SHA2('admin123', 256), 'Administrador', 'Activo', '1990-01-01');
+-- Aprendiz Juan Pérez enlazado al usuario 1
+INSERT INTO aprendices (nombre, edad, ciudad, correo, programa, ficha, jornada, id_usuario)
+VALUES ('Juan Pérez', 22, 'Bogotá', 'juan.perez@sena.edu.co', 'ADSO', 2758934, 'Mañana', 1);
 
 INSERT INTO informacion_academica (id_aprendiz, nivel, titulo, institucion, graduacion)
 VALUES (1, 'Tecnólogo', 'Analista y Desarrollador de Software', 'SENA', '2026');
@@ -185,7 +170,7 @@ SELECT
     u.id_usuario, u.nombre_usuario, u.correo, u.rol, u.estado, u.fecha_nacimiento,
     a.nombre AS nombre_aprendiz, a.programa, a.ficha
 FROM usuarios u
-LEFT JOIN aprendices a ON a.id_aprendiz = u.id_aprendiz;
+LEFT JOIN aprendices a ON a.id_usuario = u.id_usuario;
 
 -- =====================================================================
 -- CONSULTA DE VERIFICACIÓN: hoja de vida completa de un aprendiz

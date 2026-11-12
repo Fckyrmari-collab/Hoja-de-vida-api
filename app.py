@@ -1,10 +1,15 @@
-from flask import Flask, request
+from datetime import date, datetime
+
+import mysql.connector
+from flask import Flask, request, render_template
 from database import conectar_bd
 from flask_cors import CORS
+from werkzeug.security import generate_password_hash, check_password_hash
 
 
 app = Flask(__name__)
 CORS(app)
+app.json.ensure_ascii = False   # para que las tildes y la ñ se vean bien en Postman
 
 
 @app.route("/probar")
@@ -16,13 +21,154 @@ def probar_data():
 
 
 
+# =========================================================
+# USUARIOS (tabla: usuarios)
+# =========================================================
+
+# Columnas que se devuelven (NUNCA se devuelve el password)
+COLUMNAS_USUARIO = "id_usuario, nombre_usuario, correo, rol, estado, fecha_nacimiento, fecha_creacion"
+ROLES = ("Administrador", "Instructor", "Aprendiz")
+
+
+def formatear_usuario(usuario):
+    """Convierte las fechas a texto (AAAA-MM-DD) para que se vean bien en el JSON."""
+    for campo, valor in usuario.items():
+        if isinstance(valor, datetime):
+            usuario[campo] = valor.strftime("%Y-%m-%d %H:%M:%S")
+        elif isinstance(valor, date):
+            usuario[campo] = valor.isoformat()
+    return usuario
+
+
+def listar_usuarios_bd():
+    conec = conectar_bd()
+    cursor = conec.cursor(dictionary=True)
+    cursor.execute(f"SELECT {COLUMNAS_USUARIO} FROM usuarios ORDER BY id_usuario DESC")
+    usuarios = [formatear_usuario(u) for u in cursor.fetchall()]
+    cursor.close()
+    conec.close()
+    return usuarios
+
+
 @app.route("/api/registro-usuario",methods=["POST"])
 def registro_usuario():
-    pass
+    datos = request.get_json(silent=True) or {}
+
+    nombre_usuario = (datos.get("nombre_usuario") or "").strip()
+    correo = (datos.get("correo") or "").strip().lower()   # en minúscula: "Ana@x.com" y "ana@x.com" son el mismo
+    password = datos.get("password") or ""
+    fecha_nacimiento = (datos.get("fecha_nacimiento") or "").strip()
+    rol = datos.get("rol") or "Aprendiz"
+
+    # 1. Validar datos
+    faltantes = [campo for campo, valor in {
+        "nombre_usuario": nombre_usuario,
+        "correo": correo,
+        "password": password,
+        "fecha_nacimiento": fecha_nacimiento,
+    }.items() if not valor]
+    if faltantes:
+        return {"error": "Faltan campos obligatorios", "campos": faltantes}, 400
+    if "@" not in correo or "." not in correo.split("@")[-1]:
+        return {"error": "El correo no es válido"}, 400
+    if len(password) < 6:
+        return {"error": "La contraseña debe tener mínimo 6 caracteres"}, 400
+    if rol not in ROLES:
+        return {"error": f"Rol no válido. Usa uno de: {', '.join(ROLES)}"}, 400
+    try:
+        datetime.strptime(fecha_nacimiento, "%Y-%m-%d")
+    except ValueError:
+        return {"error": "fecha_nacimiento debe tener el formato AAAA-MM-DD"}, 400
+
+    conec = conectar_bd()
+    cursor = conec.cursor(dictionary=True)
+    try:
+        # 2. Revisar que el correo NO exista
+        cursor.execute("SELECT id_usuario FROM usuarios WHERE correo = %s", (correo,))
+        if cursor.fetchone():
+            return {"error": "Ese correo ya está registrado"}, 409
+
+        # 3. Revisar que el nombre de usuario NO exista
+        cursor.execute("SELECT id_usuario FROM usuarios WHERE nombre_usuario = %s", (nombre_usuario,))
+        if cursor.fetchone():
+            return {"error": "Ese nombre de usuario ya existe"}, 409
+
+        # 4. Guardar con la contraseña encriptada
+        sql = """INSERT INTO usuarios(nombre_usuario, correo, password, rol, fecha_nacimiento)
+                 VALUES(%s, %s, %s, %s, %s)"""
+        cursor.execute(sql, (nombre_usuario, correo, generate_password_hash(password), rol, fecha_nacimiento))
+        conec.commit()
+        id_generado = cursor.lastrowid
+
+    except mysql.connector.IntegrityError:
+        # Respaldo: el UNIQUE de la base de datos tampoco deja repetidos
+        conec.rollback()
+        return {"error": "El correo o el nombre de usuario ya están registrados"}, 409
+    finally:
+        cursor.close()
+        conec.close()
+
+    return {
+        "mensaje": "Usuario registrado correctamente",
+        "usuario": {
+            "id_usuario": id_generado,
+            "nombre_usuario": nombre_usuario,
+            "correo": correo,
+            "rol": rol,
+            "estado": "Activo",
+            "fecha_nacimiento": fecha_nacimiento,
+        },
+    }, 201
 
 @app.route("/api/login",methods=["POST"])
 def login ():
-    pass
+    datos = request.get_json(silent=True) or {}
+    correo = (datos.get("correo") or "").strip().lower()
+    password = datos.get("password") or ""
+
+    if not correo or not password:
+        return {"error": "Debes enviar correo y password"}, 400
+
+    conec = conectar_bd()
+    cursor = conec.cursor(dictionary=True)
+    cursor.execute(f"SELECT {COLUMNAS_USUARIO}, password FROM usuarios WHERE correo = %s", (correo,))
+    usuario = cursor.fetchone()
+    cursor.close()
+    conec.close()
+
+    if usuario is None or not password_correcto(usuario["password"], password):
+        return {"error": "Correo o contraseña incorrectos"}, 401
+    if usuario["estado"] != "Activo":
+        return {"error": "El usuario está inactivo"}, 403
+
+    usuario.pop("password")
+    return {"mensaje": "Inicio de sesión exitoso", "usuario": formatear_usuario(usuario)}, 200
+
+
+def password_correcto(hash_guardado, password):
+    # Los usuarios de prueba del .sql se crearon con SHA2 (no tienen el formato de werkzeug)
+    if "$" not in hash_guardado:
+        import hashlib
+        return hashlib.sha256(password.encode()).hexdigest() == hash_guardado
+    return check_password_hash(hash_guardado, password)
+
+
+@app.route("/api/usuarios", methods=["GET"])
+def listar_usuarios():
+    return {"usuarios": listar_usuarios_bd()}
+
+
+@app.route("/api/usuarios/<int:id_usuario>", methods=["GET"])
+def obtener_usuario(id_usuario):
+    conec = conectar_bd()
+    cursor = conec.cursor(dictionary=True)
+    cursor.execute(f"SELECT {COLUMNAS_USUARIO} FROM usuarios WHERE id_usuario = %s", (id_usuario,))
+    usuario = cursor.fetchone()
+    cursor.close()
+    conec.close()
+    if not usuario:
+        return {"mensaje": "Usuario no encontrado"}, 404
+    return formatear_usuario(usuario)
 
 
 # APRENDICES (HOJAS DE VIDA)
@@ -43,8 +189,19 @@ def registrohvida():
         conec.close()
         return {"mensaje": "el usuario ya existe"}, 400
 
-    sql = """INSERT INTO aprendices(nombre, edad, ciudad, correo, foto, programa, ficha, jornada) 
-             VALUES(%s, %s, %s, %s, %s, %s, %s, %s)"""
+    # id_usuario: viene si llenó la hoja de vida con sesión iniciada; si es visualizador llega null
+    id_usuario = datos.get("id_usuario")
+
+    if id_usuario:
+        # Un usuario solo puede tener UNA hoja de vida
+        cursor.execute("SELECT id_aprendiz FROM aprendices WHERE id_usuario = %s", (id_usuario,))
+        if cursor.fetchone():
+            cursor.close()
+            conec.close()
+            return {"mensaje": "este usuario ya tiene una hoja de vida registrada"}, 400
+
+    sql = """INSERT INTO aprendices(nombre, edad, ciudad, correo, foto, programa, ficha, jornada, id_usuario)
+             VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s)"""
     valor = (
         datos["nombre"],
         datos["edad"],
@@ -53,14 +210,20 @@ def registrohvida():
         datos.get("foto"),
         datos["programa"],
         datos["ficha"],
-        datos.get("jornada", "Mañana")
+        datos.get("jornada", "Mañana"),
+        id_usuario
     )
 
-    cursor.execute(sql, valor)
-    conec.commit()
-    id_generado = cursor.lastrowid
-    cursor.close()
-    conec.close()
+    try:
+        cursor.execute(sql, valor)
+        conec.commit()
+        id_generado = cursor.lastrowid
+    except mysql.connector.IntegrityError:
+        conec.rollback()
+        return {"mensaje": "el id_usuario no existe o ya tiene hoja de vida"}, 400
+    finally:
+        cursor.close()
+        conec.close()
 
     return {"mensaje": "Hoja de vida creada", "id": id_generado}, 201
 
@@ -412,7 +575,8 @@ def hoja_vida_completa(id_aprendiz):
 
 @app.route("/")
 def inicio():
-    return "API Hoja de Vida funcionando"
+    # Página principal: lista de usuarios + formulario de registro (templates/index.html)
+    return render_template("index.html", usuarios=listar_usuarios_bd())
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)
